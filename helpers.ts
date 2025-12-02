@@ -22,7 +22,8 @@ export interface UserPosition {
 }
 
 /**
- * Validates and loads environment variables
+ * Loads environment variables for RPC URL and secret key.
+ * @returns { rpcUrl: string, secretKey: Uint8Array }
  */
 export function loadEnv(): { rpcUrl: string; secretKey: Uint8Array } {
 	const rpcUrl = process.env.RPC_URL;
@@ -52,13 +53,24 @@ export function loadEnv(): { rpcUrl: string; secretKey: Uint8Array } {
 	return { rpcUrl, secretKey };
 }
 
+/**
+ * Adds slippage to amount.
+ * @param amount The BN amount.
+ * @param slippageBps Slippage in basis points.
+ * @returns Amount including slippage.
+ */
 export function addSlippage(amount: BN, slippageBps: number): BN {
-	// Add slippage TO the required threshold for "at most" checks
 	return amount.muln(10_000 + slippageBps).divn(10_000);
 }
 
 /**
- * Creates a new position and adds liquidity
+ * Creates a new position and adds liquidity.
+ * @param cpAmm CpAmm SDK.
+ * @param connection Solana connection.
+ * @param user User's Keypair.
+ * @param poolState Pool state.
+ * @param depositQuote Deposit quote.
+ * @returns The user's new position.
  */
 export async function createPosition(
 	cpAmm: CpAmm,
@@ -100,7 +112,6 @@ export async function createPosition(
 	);
 	console.log(`✓ Position created: ${signature}`);
 
-	// Fetch position state with retry due to slot latency
 	const position = await retry(
 		async () => {
 			const userPositions = await cpAmm.getPositionsByUser(user.publicKey);
@@ -110,7 +121,7 @@ export async function createPosition(
 			return userPositions[0];
 		},
 		{
-			maxRetries: 3,
+			maxRetries: 8,
 			initialDelay: 1000,
 			maxDelay: 30000,
 			backoffMultiplier: 2,
@@ -121,7 +132,12 @@ export async function createPosition(
 }
 
 /**
- * Prepares and signs a transaction with the latest blockhash
+ * Prepares and signs a transaction with a blockhash.
+ * @param connection Solana connection.
+ * @param transaction The transaction.
+ * @param feePayer Keypair to pay fees.
+ * @param signers Keypairs to sign.
+ * @returns The signed transaction.
  */
 export async function prepareAndSignTransaction(
 	connection: Connection,
@@ -140,7 +156,12 @@ export async function prepareAndSignTransaction(
 }
 
 /**
- * Removes all liquidity and closes a position
+ * Removes all liquidity from a position and closes it.
+ * @param cpAmm CpAmm SDK.
+ * @param connection Solana connection.
+ * @param user User's Keypair.
+ * @param position UserPosition to close.
+ * @param poolState PoolState.
  */
 export async function closePosition(
 	cpAmm: CpAmm,
@@ -151,8 +172,6 @@ export async function closePosition(
 ): Promise<void> {
 	console.log("Removing all liquidity and closing position...");
 
-	// CAUTION: Slippage thresholds are set to ZERO to accept any output
-	// and bypass slippage errors when closing positions
 	const closePositionTx = await cpAmm.removeAllLiquidityAndClosePosition({
 		owner: user.publicKey,
 		position: position.position,
@@ -174,7 +193,6 @@ export async function closePosition(
 	);
 	console.log(`✓ Position closed: ${signature}`);
 
-	// Verify position was closed
 	const userPositions = await cpAmm.getPositionsByUser(user.publicKey);
 	if (userPositions.length > 0) {
 		throw new Error(
@@ -185,18 +203,18 @@ export async function closePosition(
 
 export interface RetryOptions {
 	maxRetries: number;
-	initialDelay?: number; // in milliseconds
-	maxDelay?: number; // in milliseconds
-	backoffMultiplier?: number; // default is 2 for exponential backoff
+	initialDelay?: number;
+	maxDelay?: number;
+	backoffMultiplier?: number;
 	debug?: boolean;
 }
 
 /**
- * Retry a callback function with exponential backoff
- * @param callback - The function to retry (can be sync or async)
- * @param options - Retry configuration options
- * @returns The result of the callback function
- * @throws The last error if all retries fail
+ * Retries a function with exponential backoff.
+ * @param callback The function to retry.
+ * @param options Retry options.
+ * @returns Result of the callback.
+ * @throws If all attempts fail.
  */
 export async function retry<T>(
 	callback: () => T | Promise<T>,
@@ -214,9 +232,7 @@ export async function retry<T>(
 	let delay = initialDelay;
 
 	if (debug) {
-		console.log({
-			maxRetries,
-		});
+		console.log({ maxRetries });
 	}
 
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -229,26 +245,21 @@ export async function retry<T>(
 		} catch (error) {
 			console.log("Retry failed...");
 			lastError = error;
-
-			// If this was the last attempt, throw the error
 			if (attempt === maxRetries) {
 				throw lastError;
 			}
-
-			// Wait before retrying with exponential backoff
 			await sleep(Math.min(delay, maxDelay));
-
-			// Increase delay exponentially for next retry
 			delay *= backoffMultiplier;
 		}
 	}
 
-	// This should never be reached, but TypeScript needs it
 	throw lastError;
 }
 
 /**
- * Helper function to sleep for a given duration
+ * Sleeps for a given time (ms).
+ * @param ms Milliseconds to wait.
+ * @returns Promise that resolves after time.
  */
 export function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
