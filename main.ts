@@ -57,6 +57,8 @@ async function main() {
 				// Deposit quote is used for calculating amounts in and out when adding liquidity
 				const depositQuote = cpAmm.getDepositQuote({
 					inAmount: DEPOSIT_AMOUNT,
+					// Would get the value of TokenA and add a similar amount (given slippage)
+					// of tokenB for depositing
 					isTokenA: true,
 					minSqrtPrice: poolState.sqrtMinPrice,
 					maxSqrtPrice: poolState.sqrtMaxPrice,
